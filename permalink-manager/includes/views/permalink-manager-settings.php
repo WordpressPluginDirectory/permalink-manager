@@ -165,9 +165,9 @@ class Permalink_Manager_Settings {
 					/*'exclude_query_vars'     => array(
 						'type'        => 'text',
 						'label'       => __( 'Non-redirectable query variables', 'permalink-manager' ),
-						'placeholder' => 'eg. um_user, um_tab',
+						'placeholder' => 'e.g. um_user, um_tab',
 						'input_class' => 'widefat',
-						'description' => __( 'Use this field to exclude specific query variables from triggering a redirect when Permalink Manager detects permalinks. To prevent the redirect on dynamic sections (eg. profile tabs), you can enter the variable used by the third-party plugin (eg. <em>um_user</em> for Ultimate Member plugin).', 'permalink-manager' )
+						'description' => __( 'Use this field to exclude specific query variables from triggering a redirect when Permalink Manager detects permalinks. To prevent the redirect on dynamic sections (e.g. profile tabs), you can enter the variable used by the third-party plugin (e.g. <em>um_user</em> for Ultimate Member plugin).', 'permalink-manager' )
 					),*/ 'ignore_drafts' => array(
 						'type'        => 'select',
 						'label'       => __( 'Exclude drafts & pending posts', 'permalink-manager' ),
@@ -241,9 +241,9 @@ class Permalink_Manager_Settings {
 					),
 					'pagination_redirect' => array(
 						'type'        => 'select',
-						'label'       => __( 'Force 404 on non-existing pagination pages', 'permalink-manager' ),
-						'choices'     => array( 0 => __( 'No', 'permalink-manager' ), 1 => __( 'Yes, sent "404" status code and stop canonical redirect', 'permalink-manager' ), 2 => __( 'Yes, sent "404" status code but allow canonical redirect', 'permalink-manager' ) ),
-						'description' => __( 'If enabled, the non-existing pagination pages (for single posts) will return 404 ("Not Found") error.<br /><strong>Please disable it, if you encounter any problems with pagination pages or use custom pagination system.</strong>', 'permalink-manager' )
+						'label'       => __( 'Handling non-existent pagination pages', 'permalink-manager' ),
+						'choices'     => array( 0 => __( 'Stop canonical redirect without forcing "404" status code', 'permalink-manager' ), 1 => __( 'Stop canonical redirect and force "404" status code', 'permalink-manager' ), 2 => __( 'Allow canonical redirect without forcing "404" status code', 'permalink-manager' ) ),
+						'description' => __( 'Decide if you would like the plugin to force a "404" error or allow canonical redirect for pagination pages that do not exist.<br /><strong>If you experience any issues with pagination pages, please select the first option.</strong>', 'permalink-manager' )
 					),
 					'disable_slug_sanitization' => array(
 						'type'        => 'select',
@@ -266,11 +266,9 @@ class Permalink_Manager_Settings {
 						'description' => sprintf( __( 'Only the users who have selected capability will be able to access URI Editor.<br />The list of capabilities <a href="%s" target="_blank">can be found here</a>.', 'permalink-manager' ), 'https://wordpress.org/support/article/roles-and-capabilities/#capability-vs-role-table' )
 					),
 					'auto_fix_duplicates'       => array(
-						'type'        => 'select',
+						'type'        => 'single_checkbox',
 						'label'       => __( 'Automatically fix broken URIs', 'permalink-manager' ),
-						'input_class' => 'settings-select',
-						'choices'     => array( 0 => __( 'No', 'permalink-manager' ), 1 => __( 'Fix URIs individually (during page load)', 'permalink-manager' ), 2 => __( 'Bulk fix all URIs (once a day, in the background)', 'permalink-manager' ) ),
-						'description' => sprintf( '%s', __( 'Enable this option if you would like to automatically remove redundant permalinks & duplicated redirects.', 'permalink-manager' ) )
+						'description' => sprintf( '%s', __( 'Enable this option if you would like to automatically remove redundant permalinks & duplicated redirects during page load.', 'permalink-manager' ) )
 					)
 				)
 			)

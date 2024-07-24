@@ -107,11 +107,6 @@ class Permalink_Manager_Third_Parties {
 			add_filter( 'permalink_manager_excluded_post_ids', array( $this, 'learnpress_exclude_pages' ) );
 		}
 
-		// Bricks
-		if ( class_exists( '\Bricks\Theme' ) ) {
-			add_filter( 'permalink_manager_filter_query', array( $this, 'bricks_fix_template' ), 10, 5 );
-		}
-
 		// Google Site Kit
 		if ( class_exists( '\Google\Site_Kit\Plugin' ) ) {
 			add_filter( 'request', array( $this, 'googlesitekit_fix_request' ), 10, 1 );
@@ -468,6 +463,7 @@ class Permalink_Manager_Third_Parties {
 	 * @param array $data
 	 *
 	 * @return array
+	 * @throws XmlImportException
 	 */
 	function wpai_api_parse_function( $data ) {
 		extract( $data );
@@ -588,14 +584,14 @@ class Permalink_Manager_Third_Parties {
 	 * @param array $post_ids An array of post IDs that were just imported.
 	 */
 	function wpai_regenerate_uris_after_import( $post_ids ) {
-		global $permalink_manager_uris;
-
 		if ( ! is_array( $post_ids ) ) {
 			return;
 		}
 
 		foreach ( $post_ids as $id ) {
-			if ( ! empty( $permalink_manager_uris[ $id ] ) ) {
+			$current_uri = Permalink_Manager_URI_Functions::get_single_uri( $id, false, true, false );
+
+			if ( ! empty( $current_uri ) ) {
 				continue;
 			}
 
@@ -695,17 +691,14 @@ class Permalink_Manager_Third_Parties {
 	 * @param WP_Post $old_post The post object of the original post.
 	 */
 	function duplicate_custom_uri( $new_post_id, $old_post ) {
-		global $permalink_manager_uris;
-
 		$duplicate_post_blacklist  = get_option( 'duplicate_post_blacklist', false );
 		$duplicate_custom_uri_bool = ( ! empty( $duplicate_post_blacklist ) && strpos( $duplicate_post_blacklist, 'custom_uri' ) !== false ) ? false : true;
 
 		if ( ! empty( $old_post->ID ) && $duplicate_custom_uri_bool ) {
-			$old_post_id = $old_post->ID;
+			$old_post_uri = Permalink_Manager_URI_Functions::get_single_uri( $old_post->ID, false, true, false );
 
 			// Clone custom permalink (if set for cloned post/page)
-			if ( ! empty( $permalink_manager_uris[ $old_post_id ] ) ) {
-				$old_post_uri = $permalink_manager_uris[ $old_post_id ];
+			if ( ! empty( $old_post_uri ) ) {
 				$new_post_uri = preg_replace( '/(.+?)(\.[^\.]+$|$)/', '$1-2$2', $old_post_uri );
 
 				Permalink_Manager_URI_Functions::save_single_uri( $new_post_id, $new_post_uri, false, true );
@@ -1044,8 +1037,6 @@ class Permalink_Manager_Third_Parties {
 	 * @return array
 	 */
 	public function um_detect_extra_pages( $uri_parts ) {
-		global $permalink_manager_uris;
-
 		if ( ! function_exists( 'UM' ) ) {
 			return $uri_parts;
 		}
@@ -1059,11 +1050,13 @@ class Permalink_Manager_Third_Parties {
 		// Detect UM permalinks
 		foreach ( $um_pages as $um_page => $query_var ) {
 			$um_page_id = UM()->config()->permalinks[ $um_page ];
-			// Support for WPML/Polylang
-			$um_page_id = ( ! empty( $uri_parts['lang'] ) ) ? apply_filters( 'wpml_object_id', $um_page_id, 'page', true, $uri_parts['lang'] ) : $um_page_id;
 
-			if ( ! empty( $um_page_id ) && ! empty( $permalink_manager_uris[ $um_page_id ] ) ) {
-				$user_page_uri = preg_quote( $permalink_manager_uris[ $um_page_id ], '/' );
+			// Support for WPML/Polylang
+			$um_page_id  = ( ! empty( $uri_parts['lang'] ) ) ? apply_filters( 'wpml_object_id', $um_page_id, 'page', true, $uri_parts['lang'] ) : $um_page_id;
+			$um_page_uri = ( ! empty( $um_page_id ) ) ? Permalink_Manager_URI_Functions::get_single_uri( $um_page_id, false, true, false ) : '';
+
+			if ( ! empty( $um_page_id ) && ! empty( $um_page_uri ) ) {
+				$user_page_uri = preg_quote( $um_page_uri, '/' );
 				preg_match( "/^({$user_page_uri})\/([^\/]+)?$/", $request_url, $parts );
 
 				if ( ! empty( $parts[2] ) ) {
@@ -1100,31 +1093,6 @@ class Permalink_Manager_Third_Parties {
 		}
 
 		return $excluded_ids;
-	}
-
-	/**
-	 * Remove the obsolete 'term' and 'taxonomy' query parameters if Bricks theme is detected
-	 *
-	 * @param array $query The query object.
-	 * @param array $old_query The original query array.
-	 * @param array $uri_parts An array of the URI parts.
-	 * @param array $pm_query
-	 * @param string $content_type
-	 *
-	 * @return array
-	 */
-	function bricks_fix_template( $query, $old_query, $uri_parts, $pm_query, $content_type ) {
-		if ( ! empty( $pm_query ) && ! empty( $query['term'] ) && ! empty( $query['taxonomy'] ) ) {
-			$taxonomy = get_taxonomy( $query['taxonomy'] );
-
-			// Check if the taxonomy has a 'query_var'
-			if ( ! empty( $taxonomy->query_var ) ) {
-				unset( $query['taxonomy'] );
-				unset( $query['term'] );
-			}
-		}
-
-		return $query;
 	}
 
 	/**
