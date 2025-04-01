@@ -52,7 +52,7 @@ class Permalink_Manager_Tools {
 	 * @return string
 	 */
 	public function display_instructions() {
-		return wpautop( __( '<strong>A MySQL backup is highly recommended before using "<em>Native slugs</em>" mode!</strong>', 'permalink-manager' ) );
+		return sprintf( '<p><strong>%s</strong>', __( 'A MySQL backup is highly recommended before using "<em>Native slugs</em>" mode!', 'permalink-manager' ) );
 	}
 
 	/**
@@ -87,11 +87,11 @@ class Permalink_Manager_Tools {
 					preg_match( "/(redirect-([\d]+)_)?(?:(tax-)?([\d]*))/", $item_id, $parts );
 
 					$is_extra_redirect = ( ! empty( $parts[1] ) ) ? true : false;
-					$duplicate_type    = ( $is_extra_redirect ) ? __( 'Extra Redirect', 'permalink-manager' ) : __( 'Custom URI', 'permalink-manager' );
+					$duplicate_type    = ( $is_extra_redirect ) ? __( 'Extra Redirect', 'permalink-manager' ) : __( 'Custom permalink', 'permalink-manager' );
 					$detected_id       = $parts[4];
 					// $detected_index = $parts[2];
 					$detected_term = ( ! empty( $parts[3] ) ) ? true : false;
-					$remove_link   = ( $is_extra_redirect ) ? sprintf( " <a href=\"%s\"><span class=\"dashicons dashicons-trash\"></span> %s</a>", admin_url( "tools.php?page=permalink-manager&section=tools&subsection=duplicates&remove-redirect={$item_id}" ), __( "Remove Redirect" ) ) : "";
+					$remove_link   = ( $is_extra_redirect ) ? sprintf( " <a href=\"%s\"><span class=\"dashicons dashicons-trash\"></span> %s</a>", admin_url( "tools.php?page=permalink-manager&section=tools&subsection=duplicates&remove-redirect={$item_id}" ), __( 'Remove Redirect', 'permalink-manager' ) ) : "";
 
 					// Get term
 					if ( $detected_term && ! empty( $detected_id ) ) {
@@ -163,7 +163,7 @@ class Permalink_Manager_Tools {
 				'type'      => 'select',
 				'container' => 'row',
 				'choices'   => array(
-					'custom_uris' => __( 'Custom URIs', 'permalink-manager' ),
+					'custom_uris' => __( 'Custom permalinks', 'permalink-manager' ),
 					'slugs'       => __( 'Native slugs', 'permalink-manager' )
 				),
 			),

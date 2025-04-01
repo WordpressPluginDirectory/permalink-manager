@@ -26,6 +26,8 @@ class Permalink_Manager_Language_Plugins {
 
 			// URI Editor
 			add_filter( 'permalink_manager_uri_editor_extra_info', array( $this, 'uri_editor_get_lang_col' ), 9, 3 );
+			add_filter( 'permalink_manager_uri_editor_extra_fields', array( $this, 'uri_editor_filter_lang' ), 9, 2 );
+			add_filter( 'permalink_manager_filter_uri_editor_query', array( $this, 'uri_editor_filter_sql_query' ), 9, 3 );
 
 			// Adjust front page ID
 			add_filter( 'permalink_manager_is_front_page', array( $this, 'wpml_is_front_page' ), 9, 3 );
@@ -111,7 +113,7 @@ class Permalink_Manager_Language_Plugins {
 			add_action( 'icl_make_duplicate', array( $this, 'wpml_duplicate_uri' ), 999, 4 );
 
 			// Allow canonical redirect for default language if "Hide URL language information for default language" is turned on in Polylang settings
-			if ( ! empty( $polylang ) && ! empty( $polylang->links_model ) && isset( $polylang->links_model->options['hide_default'] ) ) {
+			if ( ! empty( $polylang ) && ! empty( $polylang->links_model ) && ! empty( $polylang->links_model->options['force_lang'] ) ) {
 				add_filter( 'permalink_manager_filter_query', array( $this, 'pl_allow_canonical_redirect' ), 3, 5 );
 			}
 		}
@@ -363,6 +365,8 @@ class Permalink_Manager_Language_Plugins {
 					$item_id = apply_filters( 'wpml_object_id', $element_id, $element_type );
 				}
 
+
+
 				// Compare the URIs to prevent the redirect loop
 				if ( $mode == 2 && ! empty( $item_id ) && $item_id !== $element_id ) {
 					$detected_element_uri   = Permalink_Manager_URI_Functions::get_single_uri( $element_id, false, false, $is_term );
@@ -437,12 +441,10 @@ class Permalink_Manager_Language_Plugins {
 			return $uri_parts;
 		}
 
-		$default_language = self::get_default_language();
-
 		// Fix for multidomain language configuration
 		if ( ( isset( $sitepress_settings['language_negotiation_type'] ) && $sitepress_settings['language_negotiation_type'] == 2 ) || ( ! empty( $polylang->options['force_lang'] ) && $polylang->options['force_lang'] == 3 ) ) {
 			if ( ! empty( $polylang->options['domains'] ) ) {
-				$domains = (array) $polylang->options['domains'];
+				$domains          = (array) $polylang->options['domains'];
 			} else if ( ! empty( $sitepress_settings['language_domains'] ) ) {
 				$domains = (array) $sitepress_settings['language_domains'];
 			}
@@ -454,6 +456,10 @@ class Permalink_Manager_Language_Plugins {
 
 				$request_url = trim( str_replace( $domains, "", $request_url ), "/" );
 			}
+
+			$default_language = "";
+		} else {
+			$default_language = self::get_default_language();
 		}
 
 		if ( ! empty( $languages_list ) ) {
@@ -565,7 +571,7 @@ class Permalink_Manager_Language_Plugins {
 	}
 
 	/**
-	 * Display the language code in a table column in bulk permalink Editor
+	 * Display the language code in a table column in Bulk Permalink Editor
 	 *
 	 * @param string $output
 	 * @param string $column
@@ -575,9 +581,87 @@ class Permalink_Manager_Language_Plugins {
 	 */
 	function uri_editor_get_lang_col( $output, $column, $element ) {
 		$language_code = self::get_language_code( $element );
-		$output        .= ( ! empty( $language_code ) ) ? sprintf( " | <span><strong>%s:</strong> %s</span>", __( "Language" ), $language_code ) : "";
+		$output        .= ( ! empty( $language_code ) ) ? sprintf( " | <span><strong>%s:</strong> %s</span>", __( 'Language', 'permalink-manager' ), $language_code ) : "";
 
 		return $output;
+	}
+
+	/**
+	 * Add extra 'language' filter field to Bulk Permalink Editor
+	 *
+	 * @param $html
+	 * @param $content_type
+	 *
+	 * @return mixed|string
+	 */
+	function uri_editor_filter_lang( $html, $content_type ) {
+		$choices   = array();
+
+		if ( class_exists( 'SitePress' ) ) {
+			$languages = apply_filters( 'wpml_active_languages', '' );
+
+			foreach ( $languages as $l ) {
+				$choices[ $l['language_code'] ] = $l['translated_name'];
+			}
+		} else if ( function_exists( 'pll_the_languages' ) ) {
+			$languages = pll_the_languages( array( 'show_flags' => 0, 'echo' => 0, 'raw' => 1 ) );
+
+			foreach ( $languages as $l ) {
+				$choices[ $l['slug'] ] = $l['name'];
+			}
+		}
+
+		if ( ! empty( $choices ) ) {
+			$choices = array_merge( array( __( 'All languages', 'permalink-manager' ) ), $choices );
+
+			$select_field = Permalink_Manager_UI_Elements::generate_option_field( 'langcode', array(
+				'type'    => 'select',
+				'choices' => $choices,
+				'value'   => ( isset( $_REQUEST['langcode'] ) ) ? esc_attr( $_REQUEST['langcode'] ) : ''
+			) );
+
+			$html = sprintf( '<div class="alignleft actions">%s</div>', $select_field );
+		}
+
+		return $html;
+	}
+
+	/**
+	 * Filter the fetched items by selected language code
+	 *
+	 * @param $sql_query
+	 * @param $sql_parts
+	 * @param $is_taxonomy
+	 *
+	 * @return void
+	 */
+	function uri_editor_filter_sql_query( $sql_query, $sql_parts, $is_taxonomy ) {
+		global $wpdb;
+
+		if ( isset( $_GET['langcode'] ) ) {
+			$lang = esc_sql( $_GET['langcode'] );
+
+			if ( class_exists( 'SitePress' ) ) {
+				if ( $is_taxonomy ) {
+					$join = "{$sql_parts['start']} INNER JOIN {$wpdb->prefix}icl_translations AS icl ON tt.term_taxonomy_id = icl.element_id AND icl.element_type = CONCAT('tax_', tt.taxonomy) AND icl.language_code = '{$lang}' ";
+				} else {
+					$join = "{$sql_parts['start']} JOIN {$wpdb->prefix}icl_translations icl ON p.ID = icl.element_id AND icl.element_type = CONCAT('post_', p.post_type) AND icl.language_code = '{$lang}' ";
+				}
+			} else if ( class_exists( 'Polylang' ) && function_exists( 'PLL' ) ) {
+				$lang_term      = PLL()->model->get_language( $lang );
+				$lang_term_ttid = ( $is_taxonomy ) ? $lang_term->get_tax_prop( 'term_language', 'term_taxonomy_id' ) : $lang_term->get_tax_prop( 'language', 'term_taxonomy_id' );
+
+				if ( $is_taxonomy ) {
+					$join = "{$sql_parts['start']} INNER JOIN {$wpdb->term_relationships} AS tr ON tt.term_id = tr.object_id AND tr.term_taxonomy_id = {$lang_term_ttid} ";
+				} else {
+					$join = "{$sql_parts['start']} INNER JOIN {$wpdb->term_relationships} AS tr ON p.ID = tr.object_id AND tr.term_taxonomy_id = {$lang_term_ttid} ";
+				}
+			}
+
+			$sql_query = ( ! empty( $join ) ) ? str_replace( $sql_parts['start'], $join, $sql_query ) : $sql_query;
+		}
+
+		return $sql_query;
 	}
 
 	/**
@@ -608,12 +692,13 @@ class Permalink_Manager_Language_Plugins {
 	 * @return string
 	 */
 	function translate_permalinks( $permalink, $post ) {
-		global $wpml_url_filters;
+		global $wpml_url_filters, $wpml_post_translations, $sitepress;
 
-		if ( ! empty( $wpml_url_filters ) ) {
+		if ( ! empty( $wpml_url_filters ) && ! empty( $wpml_post_translations ) ) {
 			$wpml_url_hook_name = _wp_filter_build_unique_id( 'post_link', array( $wpml_url_filters, 'permalink_filter' ), 1 );
+			$needs_translation  = $wpml_post_translations->element_id_in( $post->ID, $sitepress->get_current_language() ) ? 1 : 0;
 
-			if ( has_filter( 'post_link', $wpml_url_hook_name ) ) {
+			if ( has_filter( 'post_link', $wpml_url_hook_name ) && $needs_translation ) {
 				$permalink = $wpml_url_filters->permalink_filter( $permalink, $post );
 			}
 		}
@@ -855,7 +940,7 @@ class Permalink_Manager_Language_Plugins {
 				'field_data_translated' => $translation_custom_uri,
 				'field_finished'        => $uri_translation_complete,
 				'field_style'           => '0',
-				'title'                 => 'Custom URI',
+				'title'                 => __( 'Custom permalink', 'permalink-manager' )
 			);
 		}
 
@@ -932,8 +1017,8 @@ class Permalink_Manager_Language_Plugins {
 			$url_lang = $polylang->links_model->get_language_from_url();
 			$def_lang = pll_default_language( 'slug' );
 
-			// A. Check if the slug of default language is present in the requested URL + "Hide URL language information for default language" is turned on
-			if ( ( $url_lang == $def_lang ) && ! empty( $polylang->links_model->options['hide_default'] ) ) {
+			// A. Check if the slug of default language is present in the requested URL + "Hide URL language information for default language" is turned on OR the language code is present in the URL if the language is set from different domains
+			if ( ( $url_lang == $def_lang && ! empty( $polylang->links_model->options['hide_default'] ) ) || $polylang->options['force_lang'] == 3 ) {
 				unset( $query['do_not_redirect'] );
 			} // B. Check if the slug of default language is NOT present in the requested URL + "Hide URL language information for default language" is turned off
 			else if ( empty( $url_lang ) && empty( $polylang->links_model->options['hide_default'] ) ) {

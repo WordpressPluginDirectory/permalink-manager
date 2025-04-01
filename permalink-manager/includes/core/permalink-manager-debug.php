@@ -68,13 +68,9 @@ class Permalink_Manager_Debug_Functions {
 	 * @return string
 	 */
 	public function debug_redirect( $correct_permalink, $redirect_type, $queried_object ) {
-		global $wp_query;
-
 		if ( isset( $_REQUEST['debug_redirect'] ) ) {
-			$debug_info['query_vars']     = $wp_query->query_vars;
-			$debug_info['redirect_url']   = ( ! empty( $correct_permalink ) ) ? $correct_permalink : '-';
-			$debug_info['redirect_type']  = ( ! empty( $redirect_type ) ) ? $redirect_type : "-";
-			$debug_info['queried_object'] = ( ! empty( $queried_object ) ) ? $queried_object : "-";
+			$debug_info['redirect_url']  = ( ! empty( $correct_permalink ) ) ? $correct_permalink : '-';
+			$debug_info['redirect_type'] = ( ! empty( $redirect_type ) ) ? $redirect_type : "-";
 
 			self::display_debug_data( $debug_info );
 		}
@@ -137,7 +133,7 @@ class Permalink_Manager_Debug_Functions {
 		$debug_txt = print_r( $debug_info, true );
 		$debug_txt = sprintf( "<pre style=\"display:block;\">%s</pre>", esc_html( $debug_txt ) );
 
-		wp_die( $debug_txt );
+		wp_die( wp_kses_post( $debug_txt ) );
 	}
 
 	/**
@@ -177,6 +173,7 @@ class Permalink_Manager_Debug_Functions {
 		}
 		fclose( $df );
 
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo ob_get_clean();
 		die();
 	}

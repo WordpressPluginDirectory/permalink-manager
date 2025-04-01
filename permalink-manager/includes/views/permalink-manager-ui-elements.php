@@ -19,7 +19,7 @@ class Permalink_Manager_UI_Elements {
 	 * @return string
 	 */
 	static public function generate_option_field( $input_name, $args ) {
-		global $permalink_manager_options, $permalink_manager_permastructs;
+		global $permalink_manager_options;
 
 		// Reset $fields variables
 		$fields = '';
@@ -38,11 +38,11 @@ class Permalink_Manager_UI_Elements {
 		$append_content = ( isset( $args['append_content'] ) ) ? "{$args['append_content']}" : "";
 
 		// Input attributes
-		$input_atts = ( isset( $args['input_class'] ) ) ? "class='{$args['input_class']}'" : '';
-		$input_atts .= ( isset( $args['readonly'] ) ) ? " readonly='readonly'" : '';
-		$input_atts .= ( isset( $args['disabled'] ) ) ? " disabled='disabled'" : '';
-		$input_atts .= ( isset( $args['placeholder'] ) ) ? " placeholder='{$args['placeholder']}'" : '';
-		$input_atts .= ( isset( $args['extra_atts'] ) ) ? " {$args['extra_atts']}" : '';
+		$input_atts = ( ! empty( $args['input_class'] ) ) ? "class='{$args['input_class']}'" : '';
+		$input_atts .= ( ! empty( $args['readonly'] ) ) ? " readonly='readonly'" : '';
+		$input_atts .= ( ! empty( $args['disabled'] ) ) ? " disabled='disabled'" : '';
+		$input_atts .= ( ! empty( $args['placeholder'] ) ) ? " placeholder='{$args['placeholder']}'" : '';
+		$input_atts .= ( ! empty( $args['extra_atts'] ) ) ? " {$args['extra_atts']}" : '';
 
 		// Display the field if the related class exists
 		if ( ! empty( $args['class_exists'] ) ) {
@@ -188,76 +188,6 @@ class Permalink_Manager_UI_Elements {
 			case 'clearfix' :
 				return "<div class=\"clearfix\"></div>";
 
-			case 'permastruct' :
-				$siteurl = Permalink_Manager_Helper_Functions::get_permalink_base();
-
-				if ( ! empty( $args['post_type'] ) ) {
-					$type         = $args['post_type'];
-					$type_name    = $type['name'];
-					$content_type = 'post_types';
-
-					$permastructures = ( ! empty( $permalink_manager_permastructs['post_types'] ) ) ? $permalink_manager_permastructs['post_types'] : array();
-				} else if ( ! empty( $args['taxonomy'] ) ) {
-					$type         = $args['taxonomy'];
-					$type_name    = $type['name'];
-					$content_type = "taxonomies";
-
-					$permastructures = ( ! empty( $permalink_manager_permastructs['taxonomies'] ) ) ? $permalink_manager_permastructs['taxonomies'] : array();
-				} else {
-					break;
-				}
-
-				// Get permastructures
-				$default_permastruct = trim( Permalink_Manager_Helper_Functions::get_default_permastruct( $type_name ), "/" );
-				$current_permastruct = isset( $permastructures[ $type_name ] ) ? $permastructures[ $type_name ] : $default_permastruct;
-
-				// Append extra attributes
-				$input_atts .= " data-default=\"{$default_permastruct}\"";
-				$input_atts .= " placeholder=\"{$default_permastruct}\"";
-				$input_atts .= ( ! class_exists( 'Permalink_Manager_URI_Functions_Tax' ) && ! empty( $args['taxonomy'] ) ) ? " disabled=\"disabled\"" : "";
-
-				$fields .= "<div class=\"all-permastruct-container\">";
-
-				// 1. Default permastructure
-				$fields .= "<div class=\"permastruct-container\">";
-				$fields .= "<span><code>{$siteurl}/</code></span>";
-				$fields .= "<span><input type='text' {$input_atts} value='{$current_permastruct}' name='{$input_name}'/></span>";
-				$fields .= "</div>";
-
-				$fields .= "<div class=\"permastruct-toggle\">";
-
-				// 2A. Permastructure for each language
-				$languages = Permalink_Manager_Language_Plugins::get_all_languages( true );
-				if ( $languages ) {
-					$fields .= sprintf( "<h4>%s</h4><p class=\"permastruct-instruction\">%s</p>", __( "Permastructure translations", "permalink-manager" ), __( "If you would like to translate the permastructures and set-up different permalink structure per language, please fill in the fields below. Otherwise the permastructure set for default language (see field above) will be applied.", "permalink-manager" ) );
-
-					foreach ( $languages as $lang => $name ) {
-						$current_lang_permastruct = isset( $permastructures["{$type_name}_{$lang}"] ) ? $permastructures["{$type_name}_{$lang}"] : '';
-						$lang_siteurl             = Permalink_Manager_Language_Plugins::prepend_lang_prefix( $siteurl, '', $lang );
-
-						$fields .= "<label>{$name}</label>";
-						$fields .= "<div class=\"permastruct-container\">";
-						$fields .= "<span><code>{$lang_siteurl}/</code></span>";
-						$fields .= sprintf( "<span><input type='text' %s value='%s' name='%s'/></span>", $input_atts, $current_lang_permastruct, str_replace( "]", "_{$lang}]", $input_name ) );
-						$fields .= "</div>";
-					}
-				}
-
-				// 2B. Restore default permalinks
-				$fields .= sprintf( "<p class=\"default-permastruct-row columns-container\"><span class=\"column-2_4\"><strong>%s:</strong> %s</span><span class=\"column-2_4\"><a href=\"#\" class=\"restore-default\"><span class=\"dashicons dashicons-image-rotate\"></span> %s</a></span></p>", __( "Default permastructure", "permalink-manager" ), esc_html( $default_permastruct ), __( "Restore default permastructure", "permalink-manager" ) );
-
-				// 2B. Do not auto-append slug field
-				$fields .= sprintf( "<h4>%s</h4><div class=\"settings-container\">%s</div>", __( "Permastructure settings", "permalink-manager" ), self::generate_option_field( "permastructure-settings[do_not_append_slug][$content_type][{$type_name}]", array( 'type' => 'single_checkbox', 'default' => 1, 'checkbox_label' => __( "Do not automatically append the slug", "permalink-manager" ) ) ) );
-
-				$fields .= "</div>";
-
-				// 3. Show toggle button
-				$fields .= sprintf( "<p class=\"permastruct-buttons\"><a href=\"#\"><span class=\"dashicons dashicons-admin-settings\"></span> %s</a></p>", __( "Show additional settings", "permalink-manager" ) );
-
-				$fields .= "</div>";
-
-				break;
-
 			default :
 				$input_type = ( in_array( $field_type, array( 'text', 'password', 'number', 'hidden' ) ) ) ? $field_type : 'text';
 				$fields     .= sprintf( "<%s type='%s' %s value='%s' name='%s' />", 'input', $input_type, $input_atts, $value, $input_name );
@@ -383,10 +313,14 @@ class Permalink_Manager_UI_Elements {
 				// Loop through all fields assigned to this section
 				if ( isset( $field['fields'] ) ) {
 					foreach ( $field['fields'] as $section_field_id => $section_field ) {
-						$section_field_name         = ( ! empty( $section_field['name'] ) ) ? $section_field['name'] : "{$field_name}[$section_field_id]";
-						$section_field['container'] = 'row';
+						if ( is_string( $section_field ) ) {
+							$row_output .= $section_field;
+						} else {
+							$section_field_name         = ( ! empty( $section_field['name'] ) ) ? $section_field['name'] : "{$field_name}[$section_field_id]";
+							$section_field['container'] = 'row';
 
-						$row_output .= self::generate_option_field( $section_field_name, $section_field );
+							$row_output .= self::generate_option_field( $section_field_name, $section_field );
+						}
 					}
 				} else {
 					$row_output .= self::generate_option_field( $field_name, $field );
@@ -590,7 +524,9 @@ class Permalink_Manager_UI_Elements {
 		// 3. Display the alert
 		if ( isset( $updated_slugs_count ) ) {
 			if ( $updated_slugs_count > 0 && ! $preview_mode ) {
+				// translators: %d is the number of items where custom permalinks were updated
 				$alert_content = sprintf( _n( '<strong class="updated_count">%d</strong> item was updated!', '<strong class="updated_count">%d</strong> items were updated!', $updated_slugs_count, 'permalink-manager' ), $updated_slugs_count ) . ' ';
+				// translators: %s is the anchor link to the updated items' table
 				$alert_content .= sprintf( __( '<a %s>Click here</a> to go to the list of affected items', 'permalink-manager' ), "href=\"#updated-list\"" );
 
 				$alert = self::get_alert_message( $alert_content, 'updated updated_slugs' );
@@ -669,6 +605,7 @@ class Permalink_Manager_UI_Elements {
 			if ( ! empty( $element->post_status ) && $element->post_status == 'auto-draft' ) {
 				$alert = __( 'Save your post to activate the permalink editor and make changes to the custom permalink.', 'permalink-manager' );
 			} else {
+				/* translators: Link to settings page */
 				$alert = sprintf( __( 'The custom permalink cannot be edited due to the <a href="%s" target="_blank">Permalink Manager settings</a> ("<strong>Exclude drafts & pending posts</strong>") and the post status not allowing it.', 'permalink-manager' ), Permalink_Manager_Admin_Functions::get_admin_url( '&section=settings#exclusion' ) );
 			}
 
@@ -688,6 +625,7 @@ class Permalink_Manager_UI_Elements {
 			}
 
 			$auto_update_choices = array(
+				/* translators: The global value of the "Auto-update" mode setting */
 				0   => array( "label" => sprintf( __( "Use global settings [%s]", "permalink-manager" ), $auto_update_def_label ), "atts" => "data-readonly=\"{$auto_update_def_val}\"" ),
 				10  => '---',
 				- 1 => array( "label" => __( "Don't auto-update \"Custom permalink\"", "permalink-manager" ), "atts" => "data-readonly=\"0\"" ),
@@ -846,6 +784,7 @@ class Permalink_Manager_UI_Elements {
 		$html .= Permalink_Manager_UI_Elements::generate_option_field( "permalink-manager-edit-uri-element-id", array( "type" => "hidden", "input_class" => "permalink-manager-edit-uri-element-id", "value" => "" ) );
 		$html .= wp_nonce_field( 'permalink-manager-edit-uri-box', 'permalink-manager-nonce', true, false );
 
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo $html;
 	}
 
@@ -893,6 +832,7 @@ class Permalink_Manager_UI_Elements {
 		if ( class_exists( 'Permalink_Manager_Pro_Functions' ) ) {
 			$text = Permalink_Manager_Pro_Functions::get_expiration_date( false, true );
 		} else {
+			/* translators: Permalink Manager Pro website */
 			$text = sprintf( __( 'This functionality is available only in <a href="%s" target="_blank">Permalink Manager Pro</a>.', 'permalink-manager' ), PERMALINK_MANAGER_WEBSITE );
 		}
 

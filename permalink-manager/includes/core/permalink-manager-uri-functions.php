@@ -120,6 +120,7 @@ class Permalink_Manager_URI_Functions {
 
 			$found = ( ! empty( $all_uris[ $search_query ] ) ) ? $all_uris[ $search_query ] : false;
 		} else {
+			$found = array();
 			$search_query = preg_quote( $search_query, '/' );
 
 			foreach ( $custom_permalinks as $id => $uri ) {
@@ -128,7 +129,7 @@ class Permalink_Manager_URI_Functions {
 						$found[] = (int) abs( filter_var( $id, FILTER_SANITIZE_NUMBER_INT ) );
 					} else if ( $content_type == 'posts' && is_numeric( $id ) ) {
 						$found[] = (int) filter_var( $id, FILTER_SANITIZE_NUMBER_INT );
-					} else {
+					} else if ( empty( $content_type ) ) {
 						$found[] = $id;
 					}
 				}
@@ -207,7 +208,7 @@ class Permalink_Manager_URI_Functions {
 
 			return array( $custom_permalinks_size, $custom_permalinks_count );
 		} else {
-			return $permalink_manager_uris;
+			return array_filter( $permalink_manager_uris );
 		}
 	}
 
@@ -223,7 +224,7 @@ class Permalink_Manager_URI_Functions {
 		}
 
 		if ( is_array( $updated_uris ) && ! empty( $updated_uris ) ) {
-			update_option( 'permalink-manager-uris', $updated_uris, true );
+			update_option( 'permalink-manager-uris', $updated_uris, false );
 		}
 	}
 

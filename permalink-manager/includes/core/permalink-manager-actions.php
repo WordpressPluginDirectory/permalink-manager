@@ -30,7 +30,11 @@ class Permalink_Manager_Actions {
 		}
 
 		// 2. Do nothing if search query is not empty
-		if ( isset( $_REQUEST['search-submit'] ) || isset( $_REQUEST['months-filter-button'] ) ) {
+		if ( isset( $_REQUEST['search-submit'] ) || isset( $_REQUEST['filter-button'] ) ) {
+			if ( wp_verify_nonce( $_POST[ 'uri_editor' ], 'permalink-manager' ) ) {
+				$this->trigger_filter_action();
+			}
+
 			return;
 		}
 
@@ -61,6 +65,27 @@ class Permalink_Manager_Actions {
 		// 4. Display the slugs table (and append the globals)
 		if ( isset( $updated_slugs_count ) && isset( $updated_slugs_array ) ) {
 			$permalink_manager_after_sections_html .= Permalink_Manager_UI_Elements::display_updated_slugs( $updated_slugs_array );
+		}
+	}
+
+	/**
+	 * Adjust the Bulk URI Editor filter URL
+	 *
+	 * @return void
+	 */
+	public function trigger_filter_action() {
+		$query_args = array(
+			'langcode' => ! empty( $_REQUEST['langcode'] ) ? $_REQUEST['langcode'] : null,
+			'month'    => ! empty( $_REQUEST['month'] ) ? $_REQUEST['month'] : null,
+			's'        => ! empty( $_REQUEST['s'] ) ? $_REQUEST['s'] : null,
+		);
+
+		if ( ! empty( $query_args ) ) {
+			$sendback = remove_query_arg( array_keys( $query_args ), wp_get_referer() );
+			$sendback = add_query_arg( array_filter( $query_args ), $sendback );
+
+			wp_redirect( $sendback );
+			exit;
 		}
 	}
 
@@ -133,9 +158,10 @@ class Permalink_Manager_Actions {
 		// 3. Save cleared URIs & Redirects
 		if ( $removed_uris > 0 || $removed_redirects > 0 ) {
 			Permalink_Manager_URI_Functions::save_all_uris();
-			update_option( 'permalink-manager-redirects', array_filter( $permalink_manager_redirects ), true );
+			update_option( 'permalink-manager-redirects', array_filter( $permalink_manager_redirects ) );
 
-			$permalink_manager_before_sections_html .= Permalink_Manager_UI_Elements::get_alert_message( sprintf( __( '%d Custom URIs and %d Custom Redirects were removed!', 'permalink-manager' ), $removed_uris, $removed_redirects ), 'updated updated_slugs' );
+			// Translators: 1: Number of custom URIs, 2: Number of custom redirects.
+			$permalink_manager_before_sections_html .= Permalink_Manager_UI_Elements::get_alert_message( sprintf( __( '%1$d Custom URIs and %2$d Custom Redirects were removed!', 'permalink-manager' ), $removed_uris, $removed_redirects ), 'updated updated_slugs' );
 		} else {
 			$permalink_manager_before_sections_html .= Permalink_Manager_UI_Elements::get_alert_message( __( 'No Custom URIs or Custom Redirects were removed!', 'permalink-manager' ), 'error updated_slugs' );
 		}
@@ -233,7 +259,7 @@ class Permalink_Manager_Actions {
 			return array( $removed_uris, $removed_redirects );
 		} else if ( ! empty( $removed_uris ) || ! empty( $removed_redirects ) ) {
 			Permalink_Manager_URI_Functions::save_all_uris();
-			update_option( 'permalink-manager-redirects', array_filter( $permalink_manager_redirects ), true );
+			update_option( 'permalink-manager-redirects', array_filter( $permalink_manager_redirects ) );
 		}
 
 		return array();
@@ -325,13 +351,14 @@ class Permalink_Manager_Actions {
 		// Check if custom URI is set
 		if ( ! empty( $custom_uri ) ) {
 			Permalink_Manager_URI_Functions::remove_single_uri( $uri_key, null, true );
+			// translators: %s is the custom URI that was removed.
 			$updated = Permalink_Manager_UI_Elements::get_alert_message( sprintf( __( 'URI "%s" was removed successfully!', 'permalink-manager' ), $custom_uri ), 'updated' );
 		}
 
 		// Check if custom redirects are set
 		if ( isset( $permalink_manager_redirects[ $uri_key ] ) ) {
 			unset( $permalink_manager_redirects[ $uri_key ] );
-			update_option( 'permalink-manager-redirects', $permalink_manager_redirects, true );
+			update_option( 'permalink-manager-redirects', $permalink_manager_redirects );
 		}
 
 		if ( empty( $updated ) ) {
@@ -517,6 +544,7 @@ class Permalink_Manager_Actions {
 			// Reload globals
 			$permalink_manager->get_options_and_globals();
 
+			// Translators: %s is the name of the data field that was removed
 			$alert_message                          = sprintf( __( '%s were removed!', 'permalink-manager' ), $alert );
 			$permalink_manager_before_sections_html .= Permalink_Manager_UI_Elements::get_alert_message( $alert_message, 'updated updated_slugs' );
 		}
@@ -603,7 +631,7 @@ class Permalink_Manager_Actions {
 
 					// Check for MySQL errors
 					if ( ! empty( $wpdb->last_error ) ) {
-						printf( '%s (%sMB)', $wpdb->last_error, strlen( serialize( $items ) ) / 1000000 );
+						printf( '%s (%sMB)', esc_html( $wpdb->last_error ), esc_html( number_format( strlen( serialize( $items ) ) / 1000000, 2 ) ) );
 						http_response_code( 500 );
 						die();
 					}

@@ -41,17 +41,19 @@ class Permalink_Manager_Core_Functions {
 		// Use the URIs set in this plugin
 		add_filter( 'request', array( $this, 'detect_post' ), 0, 1 );
 
-		// Redirect from old URIs to new URIs  + adjust canonical redirect settings
-		add_action( 'template_redirect', array( $this, 'new_uri_redirect_and_404' ), 1 );
-		add_action( 'wp', array( $this, 'adjust_canonical_redirect' ), 1 );
+		if ( ! is_admin() ) {
+			// Redirect from old URIs to new URIs  + adjust canonical redirect settings
+			add_action( 'template_redirect', array( $this, 'new_uri_redirect_and_404' ), 1 );
+			add_action( 'wp', array( $this, 'adjust_canonical_redirect' ), 1 );
 
-		// Case-insensitive permalinks
-		if ( ! empty( $permalink_manager_options['general']['case_insensitive_permalinks'] ) ) {
-			add_action( 'parse_request', array( $this, 'case_insensitive_permalinks' ), 0 );
-		}
-		// Force 404 on non-existing pagination pages
-		if ( ! empty( $permalink_manager_options['general']['pagination_redirect'] ) ) {
-			add_action( 'wp', array( $this, 'fix_pagination_pages' ), 0 );
+			// Case-insensitive permalinks
+			if ( ! empty( $permalink_manager_options['general']['case_insensitive_permalinks'] ) ) {
+				add_action( 'parse_request', array( $this, 'case_insensitive_permalinks' ), 0 );
+			}
+			// Force 404 on non-existing pagination pages
+			if ( ! empty( $permalink_manager_options['general']['pagination_redirect'] ) ) {
+				add_action( 'wp', array( $this, 'fix_pagination_pages' ), 0 );
+			}
 		}
 	}
 
@@ -537,11 +539,13 @@ class Permalink_Manager_Core_Functions {
 
 		// Keep the original permalink in a separate variable
 		$original_permalink = $permalink;
+		$permalink_path     = parse_url( $original_permalink, PHP_URL_PATH );
+		$permalink_path     = ( ! empty( $permalink_path ) ) ? trim( $permalink_path, '/' ) : $permalink_path;
 
 		$trailing_slash_mode = ( ! empty( $permalink_manager_options['general']['trailing_slashes'] ) ) ? $permalink_manager_options['general']['trailing_slashes'] : "";
 
 		// Ignore homepage URLs
-		if ( ( filter_var( $permalink, FILTER_VALIDATE_URL ) && trim( parse_url( $permalink, PHP_URL_PATH ), '/' ) == '' ) ) {
+		if ( filter_var( $permalink, FILTER_VALIDATE_URL ) && empty( $permalink_path ) ) {
 			return $permalink;
 		}
 
@@ -671,13 +675,19 @@ class Permalink_Manager_Core_Functions {
 			$old_uri        = preg_replace( "/{$home_dir_regex}/", "", $old_uri, 1 );
 		}
 
+		if ( is_front_page() || ( is_page() && get_option( 'show_on_front' ) === 'page' && get_queried_object_id() === (int) get_option( 'page_on_front' ) ) ) {
+			$is_front_page = true;
+		} else {
+			$is_front_page = false;
+		}
+
 		// Do not use custom redirects on author pages, search & front page
-		if ( ! is_author() && ! is_front_page() && ! is_home() && ! is_feed() && ! is_search() && empty( $_GET['s'] ) ) {
+		if ( ! is_author() && ! $is_front_page && ! is_home() && ! is_feed() && ! is_search() && empty( $_GET['s'] ) ) {
 			// Sometimes $wp_query indicates the wrong object if requested directly
 			$queried_object = get_queried_object();
 
 			// Unset 404 if custom URI is detected
-			if ( ! empty( $pm_query['id'] ) && ( empty( $queried_object->post_status ) || $queried_object->post_status !== 'private' ) ) {
+			if ( ! empty( $pm_query['id'] ) && ! empty( $queried_object->post_status ) ) {
 				$wp_query->is_404 = false;
 			}
 
@@ -825,7 +835,7 @@ class Permalink_Manager_Core_Functions {
 		/**
 		 * 4. Check trailing & duplicated slashes (ignore links with query parameters)
 		 */
-		if ( ( ( $trailing_slashes_mode && $trailing_slashes_redirect ) || preg_match( '/\/{2,}/', $old_uri ) ) && empty( $_POST ) && empty( $correct_permalink ) && empty( $query_string ) && ! empty( $old_uri ) && $old_uri !== "/" ) {
+		if ( ( ( $trailing_slashes_mode && $trailing_slashes_redirect ) || preg_match( '/\/{2,}/', $old_uri ) ) && empty( $is_front_page ) && empty( $_POST ) && empty( $correct_permalink ) && empty( $query_string ) && ! empty( $old_uri ) && $old_uri !== "/" ) {
 			$trailing_slash = ( substr( $old_uri, - 1 ) == "/" ) ? true : false;
 			$obsolete_slash = ( preg_match( '/\/{2,}/', $old_uri ) || preg_match( "/.*\.([a-zA-Z]{3,4})\/$/", $old_uri ) );
 
@@ -867,15 +877,15 @@ class Permalink_Manager_Core_Functions {
 			// Allow redirect
 			$wp_query->query_vars['do_not_redirect'] = 0;
 
-			// Append query string
-			$correct_permalink = ( ! empty( $query_string ) ) ? sprintf( "%s?%s", strtok( $correct_permalink, "?" ), $query_string ) : $correct_permalink;
-
 			// Adjust trailing slashes
 			$correct_permalink = self::control_trailing_slashes( $correct_permalink );
 
 			// Prevent redirect loop
 			$rel_old_uri = wp_make_link_relative( $old_uri_abs );
 			$rel_new_uri = wp_make_link_relative( $correct_permalink );
+
+			// Append query string
+			$correct_permalink = ( ! empty( $query_string ) ) ? sprintf( "%s?%s", strtok( $correct_permalink, "?" ), $query_string ) : $correct_permalink;
 
 			if ( $redirect_type === 'www_redirect' || $rel_old_uri !== $rel_new_uri ) {
 				wp_safe_redirect( $correct_permalink, $redirect_mode, PERMALINK_MANAGER_PLUGIN_NAME );

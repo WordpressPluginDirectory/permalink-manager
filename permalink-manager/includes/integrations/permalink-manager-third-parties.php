@@ -45,13 +45,15 @@ class Permalink_Manager_Third_Parties {
 		if ( class_exists( 'PMXI_Plugin' ) && ( ! empty( $permalink_manager_options['general']['pmxi_support'] ) ) ) {
 			add_action( 'pmxi_extend_options_featured', array( $this, 'wpaiextra_uri_display' ), 9, 2 );
 			add_filter( 'pmxi_options_options', array( $this, 'wpai_api_options' ) );
+			add_action( 'pmxi_reimport', array( $this, 'wpai_toggle_import' ), 10, 2 );
+			add_filter( 'pmxi_save_options', array( $this, 'wpai_save_toggle_import' ), 10 );
 			add_filter( 'pmxi_addons', array( $this, 'wpai_api_register' ) );
 			add_filter( 'wp_all_import_addon_parse', array( $this, 'wpai_api_parse' ) );
 			add_filter( 'wp_all_import_addon_import', array( $this, 'wpai_api_import' ) );
 
 			add_action( 'pmxi_saved_post', array( $this, 'wpai_save_redirects' ) );
 
-			add_action( 'pmxi_after_xml_import', array( $this, 'wpai_schedule_regenerate_uris_after_xml_import' ), 10, 1 );
+			add_action( 'pmxi_after_xml_import', array( $this, 'wpai_bulk_regenerate_uris_after_xml_import' ), 10, 1 );
 			add_action( 'wpai_regenerate_uris_after_import_event', array( $this, 'wpai_regenerate_uris_after_import' ), 10, 1 );
 		}
 
@@ -71,8 +73,11 @@ class Permalink_Manager_Third_Parties {
 		// My Listing by 27collective
 		if ( class_exists( '\MyListing\Post_Types' ) ) {
 			add_filter( 'permalink_manager_filter_default_post_uri', array( $this, 'ml_listing_custom_fields' ), 5, 5 );
-			add_action( 'mylisting/submission/save-listing-data', array( $this, 'ml_set_listing_uri' ), 100 );
 			add_filter( 'permalink_manager_filter_query', array( $this, 'ml_detect_archives' ), 1, 2 );
+
+			add_filter( 'mylisting/admin/save-listing-data', array( $this, 'ml_delay_set_listing_uri' ), 0 );
+			add_action( 'mylisting/admin/save-listing-data', array( $this, 'ml_set_listing_uri' ), 1500 );
+			add_action( 'mylisting/submission/done', array( $this, 'ml_set_listing_uri' ), 1500 );
 		}
 
 		// bbPress
@@ -110,6 +115,11 @@ class Permalink_Manager_Third_Parties {
 		// Google Site Kit
 		if ( class_exists( '\Google\Site_Kit\Plugin' ) ) {
 			add_filter( 'request', array( $this, 'googlesitekit_fix_request' ), 10, 1 );
+		}
+
+		// WPForo
+		if ( class_exists( 'wpforo\wpforo' ) ) {
+			add_filter( 'permalink_manager_filter_query', array( $this, 'wpforo_adjust_query' ), 5, 6 );
 		}
 	}
 
@@ -179,15 +189,6 @@ class Permalink_Manager_Third_Parties {
 
 			// LearnPress
 			if ( ! empty( $query_vars['view'] ) && ! empty( $query_vars['page_id'] ) ) {
-				$wp_query->query_vars['do_not_redirect'] = 1;
-			}
-		}
-
-		// WPForo
-		if ( defined( 'WPFORO_VERSION' ) ) {
-			$forum_page_id = get_option( 'wpforo_pageid' );
-
-			if ( ! empty( $forum_page_id ) && ! empty( $post->ID ) && $forum_page_id == $post->ID ) {
 				$wp_query->query_vars['do_not_redirect'] = 1;
 			}
 		}
@@ -383,6 +384,8 @@ class Permalink_Manager_Third_Parties {
 		// Check if post type is supported
 		if ( $content_type !== 'taxonomies' && Permalink_Manager_Helper_Functions::is_post_type_disabled( $content_type ) ) {
 			return;
+		} else if ( $content_type == 'taxonomies' && ( ! class_exists( 'Permalink_Manager_URI_Functions_Tax' ) || empty( $current_values['taxonomy_type'] ) || Permalink_Manager_Helper_Functions::is_taxonomy_disabled( $current_values['taxonomy_type'] ) ) ) {
+			return;
 		}
 
 		// Get custom URI format
@@ -394,7 +397,8 @@ class Permalink_Manager_Third_Parties {
 		$html .= '<div class="wpallimport-collapsed-content">';
 
 		$html .= '<div class="template_input">';
-		$html .= Permalink_Manager_UI_Elements::generate_option_field( 'custom_uri', array( 'extra_atts' => 'style="width:100%; line-height: 25px;"', 'placeholder' => __( 'Custom URI', 'permalink-manager' ), 'value' => $custom_uri ) );
+		$html .= Permalink_Manager_UI_Elements::generate_option_field( 'custom_uri', array( 'extra_atts' => 'style="width:100%; line-height: 25px;"', 'placeholder' => __( 'Custom permalink', 'permalink-manager' ), 'value' => $custom_uri ) );
+		/* translators: %s: Permastructures admin URL */
 		$html .= wpautop( sprintf( __( 'If empty, a default permalink based on your current <a href="%s" target="_blank">permastructure settings</a> will be used.', 'permalink-manager' ), Permalink_Manager_Admin_Functions::get_admin_url( '&section=permastructs' ) ) );
 		$html .= '</div>';
 
@@ -402,6 +406,7 @@ class Permalink_Manager_Third_Parties {
 		$html .= '</div>';
 		$html .= '</div>';
 
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo $html;
 	}
 
@@ -414,6 +419,41 @@ class Permalink_Manager_Third_Parties {
 	 */
 	function wpai_api_options( $all_options ) {
 		return $all_options + array( 'custom_uri' => null );
+	}
+
+	/**
+	 * Allow to choose if the custom permalink should be updated during import
+	 *
+	 * @param $post_type
+	 * @param $post
+	 */
+	function wpai_toggle_import( $post_type, $post ) {
+		if ( Permalink_Manager_Helper_Functions::is_post_type_disabled( $post_type ) ) {
+			return;
+		}
+
+		$default_value = ( ! isset( $post['is_update_custom_uri'] ) ) ? 1 : $post['is_update_custom_uri'];
+
+		$html = '<input type="hidden" name="is_update_custom_uri" value="0" />';
+		$html .= sprintf( '<input type="checkbox" id="is_update_custom_uri" name="is_update_custom_uri" value="1" %s class="switcher" /> ', checked( 1, $default_value, false ) );
+		$html .= sprintf( '<label for="is_import_custom_permalink">%s (%s)</label>', esc_html__( 'Custom permalink', 'permalink-manager' ), esc_html__( 'Permalink Manager', 'permalink-manager' ) );
+
+		echo sprintf( '<div class="input">%s</div>', $html );
+	}
+
+	/**
+	 * Save the "Choose which data to update" settings
+	 *
+	 * @param $post
+	 *
+	 * @return mixed
+	 */
+	function wpai_save_toggle_import( $post ) {
+		if ( isset( $_POST['is_update_custom_uri'] ) && is_numeric( $_POST['is_update_custom_uri'] ) ) {
+			$post['is_update_custom_uri'] = filter_var( $_POST['is_update_custom_uri'], FILTER_SANITIZE_NUMBER_INT );
+		}
+
+		return $post;
 	}
 
 	/**
@@ -471,6 +511,11 @@ class Permalink_Manager_Third_Parties {
 		$data        = array(); // parsed data
 		$option_name = 'custom_uri';
 
+		// Check if the custom permalinks data should be imported
+		if ( isset( $import->options['is_update_custom_uri'] ) && $import->options['is_update_custom_uri'] == 0 ) {
+			return $data;
+		}
+
 		if ( ! empty( $import->options[ $option_name ] ) && class_exists( 'XmlImportParser' ) ) {
 			$cxpath    = $xpath_prefix . $import->xpath;
 			$tmp_files = array();
@@ -510,6 +555,10 @@ class Permalink_Manager_Third_Parties {
 		// Check if the imported elements are terms
 		if ( $importData['post_type'] == 'taxonomies' ) {
 			$is_term = true;
+
+			if ( ! class_exists( 'Permalink_Manager_URI_Functions_Tax' ) ) {
+				return;
+			}
 		} else if ( Permalink_Manager_Helper_Functions::is_post_type_disabled( $importData['post_type'] ) ) {
 			return;
 		}
@@ -530,7 +579,7 @@ class Permalink_Manager_Third_Parties {
 
 					if ( $new_uri !== $old_uri ) {
 						Permalink_Manager_URI_Functions::save_single_uri( $pid, $new_uri, true, true );
-						do_action( 'permalink_manager_updated_term_uri', $pid, $new_uri, $old_uri, $native_uri, $default_uri, $single_update = true, $uri_saved = true );
+						do_action( 'permalink_manager_updated_term_uri', $pid, $new_uri, $old_uri, $native_uri, $default_uri, $uri_saved = true );
 					}
 				} else {
 					$default_uri = Permalink_Manager_URI_Functions_Post::get_default_post_uri( $pid );
@@ -540,7 +589,7 @@ class Permalink_Manager_Third_Parties {
 
 					if ( $new_uri !== $old_uri ) {
 						Permalink_Manager_URI_Functions::save_single_uri( $pid, $new_uri, false, true );
-						do_action( 'permalink_manager_updated_post_uri', $pid, $new_uri, $old_uri, $native_uri, $default_uri, $single_update = true, $uri_saved = true );
+						do_action( 'permalink_manager_updated_post_uri', $pid, $new_uri, $old_uri, $native_uri, $default_uri, $uri_saved = true );
 					}
 				}
 			}
@@ -566,15 +615,21 @@ class Permalink_Manager_Third_Parties {
 	 *
 	 * @param int $import_id The ID of the import.
 	 */
-	function wpai_schedule_regenerate_uris_after_xml_import( $import_id ) {
+	function wpai_bulk_regenerate_uris_after_xml_import( $import_id ) {
 		global $wpdb;
 
-		$post_ids = $wpdb->get_col( "SELECT post_id FROM {$wpdb->prefix}pmxi_posts WHERE import_id = {$import_id}" );
-		$chunks   = array_chunk( $post_ids, 200 );
+		$post_ids   = $wpdb->get_col( $wpdb->prepare( "SELECT post_id FROM {$wpdb->prefix}pmxi_posts WHERE import_id = %d", $import_id ) );
+		$chunk_size = 200;
 
-		// Schedule URI regenerate and split into bulks
-		foreach ( $chunks as $i => $chunk ) {
-			wp_schedule_single_event( time() + ( $i * 30 ), 'wpai_regenerate_uris_after_import_event', array( $chunk ) );
+		if ( count( $post_ids ) <= $chunk_size ) {
+			$this->wpai_regenerate_uris_after_import( $post_ids );
+		} else {
+			// Schedule URI regenerate and split into bulks to prevent timeout
+			$chunks = array_chunk( $post_ids, $chunk_size );
+
+			foreach ( $chunks as $i => $chunk ) {
+				wp_schedule_single_event( time() + ( $i * 30 ), 'wpai_regenerate_uris_after_import_event', array( $chunk ) );
+			}
 		}
 	}
 
@@ -589,24 +644,26 @@ class Permalink_Manager_Third_Parties {
 		}
 
 		foreach ( $post_ids as $id ) {
-			$current_uri = Permalink_Manager_URI_Functions::get_single_uri( $id, false, true, false );
-
-			if ( ! empty( $current_uri ) ) {
-				continue;
-			}
-
-			$post_object = get_post( $id );
-
-			// Check if post is allowed
-			if ( empty( $post_object->post_type ) || Permalink_Manager_Helper_Functions::is_post_excluded( $post_object, true ) ) {
-				continue;
-			}
-
-			$default_uri = Permalink_Manager_URI_Functions_Post::get_default_post_uri( $id );
-			Permalink_Manager_URI_Functions::save_single_uri( $id, $default_uri );
+			$this->wpai_regenerate_single_uri_after_import( $id, false );
 		}
 
 		Permalink_Manager_URI_Functions::save_all_uris();
+	}
+
+	/**
+	 * Regenerate the single custom permalink
+	 *
+	 * @param int $post_id
+	 * @param bool $db_save
+	 */
+	function wpai_regenerate_single_uri_after_import( $post_id, $db_save = true ) {
+		$current_uri = Permalink_Manager_URI_Functions::get_single_uri( $post_id, false, true, false );
+
+		if ( ! empty( $current_uri ) ) {
+			return;
+		}
+
+		Permalink_Manager_URI_Functions_Post::save_uri( $post_id, '', true, 0, $db_save );
 	}
 
 	/**
@@ -719,26 +776,16 @@ class Permalink_Manager_Third_Parties {
 	 */
 	public function ml_listing_custom_fields( $default_uri, $native_slug, $element, $slug, $native_uri ) {
 		// Use only for "listing" post type & custom permalink
-		if ( empty( $element->post_type ) || $element->post_type !== 'job_listing' ) {
+		if ( empty( $element->post_type ) || $element->post_type !== 'job_listing' || ! class_exists( 'MyListing\Src\Listing' ) ) {
 			return $default_uri;
 		}
 
+		// Get the listing object
+		$listing_object = MyListing\Src\Listing::get( $element );
+
 		// A1. Listing type
 		if ( strpos( $default_uri, '%listing-type%' ) !== false || strpos( $default_uri, '%listing_type%' ) !== false ) {
-			if ( class_exists( 'MyListing\Src\Listing' ) ) {
-				$listing_type_post = MyListing\Src\Listing::get( $element );
-				$listing_type      = ( is_object( $listing_type_post ) && ! empty( $listing_type_post->type ) ) ? $listing_type_post->type->get_permalink_name() : '';
-			} else {
-				$listing_type_slug = get_post_meta( $element->ID, '_case27_listing_type', true );
-				$listing_type_post = get_page_by_path( $listing_type_slug, OBJECT, 'case27_listing_type' );
-
-				if ( ! empty( $listing_type_post ) ) {
-					$listing_type_post_settings = get_post_meta( $listing_type_post->ID, 'case27_listing_type_settings_page', true );
-					$listing_type_post_settings = ( is_serialized( $listing_type_post_settings ) ) ? unserialize( $listing_type_post_settings ) : array();
-
-					$listing_type = ( ! empty( $listing_type_post_settings['permalink'] ) ) ? $listing_type_post_settings['permalink'] : $listing_type_post->post_name;
-				}
-			}
+			$listing_type = ( is_object( $listing_object ) && ! empty( $listing_object->type ) ) ? $listing_object->type->get_permalink_name() : '';
 
 			if ( ! empty( $listing_type ) ) {
 				$default_uri = str_replace( array( '%listing-type%', '%listing_type%' ), Permalink_Manager_Helper_Functions::sanitize_title( $listing_type, true ), $default_uri );
@@ -768,30 +815,55 @@ class Permalink_Manager_Third_Parties {
 		// C. Listing region
 		if ( strpos( $default_uri, '%listing-region%' ) !== false || strpos( $default_uri, '%listing_region%' ) !== false ) {
 			$listing_region_terms = wp_get_object_terms( $element->ID, 'region' );
-			$listing_region_term  = ( ! is_wp_error( $listing_region_terms ) && ! empty( $listing_region_terms ) && is_object( $listing_region_terms[0] ) ) ? Permalink_Manager_Helper_Functions::get_lowest_element( $listing_region_terms[0], $listing_region_terms ) : "";
 
-			if ( ! empty( $listing_region_term ) ) {
+			if ( is_object( $listing_object ) && method_exists( $listing_object, 'get_field' ) ) {
+				$listing_regions     = $listing_object->get_field( 'region' );
+				$listing_region_term = $listing_regions[0];
+			} else {
+				$listing_region_term = ( ! is_wp_error( $listing_region_terms ) && ! empty( $listing_region_terms ) && is_object( $listing_region_terms[0] ) ) ? Permalink_Manager_Helper_Functions::get_lowest_element( $listing_region_terms[0], $listing_region_terms ) : "";
+			}
+
+			if ( ! empty( $listing_region_term ) && is_a( $listing_region_term, 'WP_Term' ) ) {
 				$listing_region = Permalink_Manager_Helper_Functions::get_term_full_slug( $listing_region_term, $listing_region_terms, 2 );
 				$listing_region = Permalink_Manager_Helper_Functions::sanitize_title( $listing_region, true );
-
-				$default_uri = str_replace( array( '%listing-region%', '%listing_region%' ), $listing_region, $default_uri );
+			} else {
+				$listing_region = '';
 			}
+
+			$default_uri = str_replace( array( '%listing-region%', '%listing_region%' ), $listing_region, $default_uri );
 		}
 
 		// D. Listing category
 		if ( strpos( $default_uri, '%listing-category%' ) !== false || strpos( $default_uri, '%listing_category%' ) !== false ) {
 			$listing_category_terms = wp_get_object_terms( $element->ID, 'job_listing_category' );
-			$listing_category_term  = ( ! is_wp_error( $listing_category_terms ) && ! empty( $listing_category_terms ) && is_object( $listing_category_terms[0] ) ) ? Permalink_Manager_Helper_Functions::get_lowest_element( $listing_category_terms[0], $listing_category_terms ) : "";
 
-			if ( ! empty( $listing_category_term ) ) {
+			if ( is_object( $listing_object ) && method_exists( $listing_object, 'get_field' ) ) {
+				$listing_categories    = $listing_object->get_field( 'category' );
+				$listing_category_term = $listing_categories[0];
+			} else {
+				$listing_category_term  = ( ! is_wp_error( $listing_category_terms ) && ! empty( $listing_category_terms ) && is_object( $listing_category_terms[0] ) ) ? Permalink_Manager_Helper_Functions::get_lowest_element( $listing_category_terms[0], $listing_category_terms ) : "";
+			}
+
+			if ( ! empty( $listing_category_term ) && is_a( $listing_category_term, 'WP_Term' ) ) {
 				$listing_category = Permalink_Manager_Helper_Functions::get_term_full_slug( $listing_category_term, $listing_category_terms, 2 );
 				$listing_category = Permalink_Manager_Helper_Functions::sanitize_title( $listing_category, true );
-
-				$default_uri = str_replace( array( '%listing-category%', '%listing_category%' ), $listing_category, $default_uri );
+			} else {
+				$listing_category = '';
 			}
+
+			$default_uri = str_replace( array( '%listing-category%', '%listing_category%' ), $listing_category, $default_uri );
 		}
 
 		return $default_uri;
+	}
+
+	/**
+	 * Make sure that the custom permalink is generated only after the listing's field are processed
+	 *
+	 * @param $post_id
+	 */
+	function ml_delay_set_listing_uri( $post_id ) {
+		add_filter( 'permalink_manager_allow_new_post_uri', '__return_false' );
 	}
 
 	/**
@@ -800,10 +872,11 @@ class Permalink_Manager_Third_Parties {
 	 * @param int $post_id
 	 */
 	function ml_set_listing_uri( $post_id ) {
-		$default_uri = Permalink_Manager_URI_Functions_Post::get_default_post_uri( $post_id );
+		$custom_uri = Permalink_Manager_URI_Functions_Post::get_post_uri( $post_id, false, true );
 
-		if ( $default_uri ) {
-			Permalink_Manager_URI_Functions::save_single_uri( $post_id, $default_uri, false, true );
+		if ( empty( $custom_uri ) ) {
+			add_filter( 'permalink_manager_allow_new_post_uri', '__return_true' );
+			Permalink_Manager_URI_Functions_Post::save_uri( $post_id, '', true, 0 );
 		}
 	}
 
@@ -834,7 +907,7 @@ class Permalink_Manager_Third_Parties {
 				$ml_taxonomies = array_keys( $ml_taxonomies );
 
 				foreach ( $ml_taxonomies as $taxonomy ) {
-					if ( ! empty( $query[ $taxonomy ] ) && empty( $_GET[ $taxonomy ] ) ) {
+					if ( ! empty( $query[ $taxonomy ] ) && ! empty( $query['term'] ) && empty( $_GET[ $taxonomy ] ) ) {
 						$new_query["explore_tab"]         = $taxonomy;
 						$new_query["explore_{$taxonomy}"] = $query['term'];
 					}
@@ -1133,6 +1206,39 @@ class Permalink_Manager_Third_Parties {
 		}
 
 		return $request;
+	}
+
+	/**
+	 * Adjust the query if WPForo page is detected
+	 *
+	 * @param array $query The query object.
+	 * @param array $old_query The original query array.
+	 * @param array $uri_parts An array of the URI parts.
+	 * @param array $pm_query
+	 * @param string $content_type
+	 * @param null|WP_Post|WP_Term $element_object
+	 *
+	 * @return array
+	 */
+	function wpforo_adjust_query( $query, $old_query, $uri_parts, $pm_query, $content_type, $element_object ) {
+		if ( ! function_exists( 'wpforo_get_option' ) || ! function_exists( 'WPF' ) ) {
+			return $query;
+		}
+
+		$boards = WPF()->board->get_boards_pageids();
+		$boards[] = wpforo_get_option( 'wpforo_pageid2', 0 );
+
+		if ( ! empty( $element_object->ID ) ) {
+			$detected_page_id = $element_object->ID;
+		} else if ( ! empty( $old_query['page_id'] ) ) {
+			$detected_page_id = $old_query['page_id'];
+		}
+
+		if ( ! empty( $boards ) && ! empty( $detected_page_id ) && in_array( $detected_page_id, $boards ) ) {
+			$query['do_not_redirect'] = 1;
+		}
+
+		return $query;
 	}
 
 }

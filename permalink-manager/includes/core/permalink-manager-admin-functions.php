@@ -112,31 +112,31 @@ class Permalink_Manager_Admin_Functions {
 	public function add_menu_page() {
 		$this->menu_name = add_management_page( __( 'Permalink Manager', 'permalink-manager' ), __( 'Permalink Manager', 'permalink-manager' ), 'manage_options', PERMALINK_MANAGER_PLUGIN_SLUG, array( $this, 'display_section' ) );
 
-		add_action( 'admin_init', array( $this, 'enqueue_styles' ) );
-		add_action( 'admin_init', array( $this, 'enqueue_scripts' ) );
+		add_action( 'admin_init', array( $this, 'enqueue_cssjs' ) );
 	}
 
 	/**
 	 * Display the plugin sections
 	 */
 	public function display_section() {
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo Permalink_Manager_UI_Elements::get_plugin_sections_html( $this->sections, $this->active_section, $this->active_subsection );
 	}
 
 	/**
-	 * Register the CSS files for the plugin's dashboard
+	 * Register the CSS & JS files for the plugin's dashboard
 	 */
-	public function enqueue_styles() {
+	public function enqueue_cssjs() {
 		wp_enqueue_style( 'permalink-manager-plugins', PERMALINK_MANAGER_URL . '/out/permalink-manager-plugins.css', array(), PERMALINK_MANAGER_VERSION );
 		wp_enqueue_style( 'permalink-manager', PERMALINK_MANAGER_URL . '/out/permalink-manager-admin.css', array( 'permalink-manager-plugins' ), PERMALINK_MANAGER_VERSION );
-	}
 
-	/**
-	 * Register the JavaScript files for the plugin's dashboard.
-	 */
-	public function enqueue_scripts() {
-		wp_enqueue_script( 'permalink-manager-plugins', PERMALINK_MANAGER_URL . '/out/permalink-manager-plugins.js', array( 'jquery', ), PERMALINK_MANAGER_VERSION );
-		wp_enqueue_script( 'permalink-manager', PERMALINK_MANAGER_URL . '/out/permalink-manager-admin.js', array( 'jquery', 'permalink-manager-plugins' ), PERMALINK_MANAGER_VERSION );
+		wp_enqueue_script( 'permalink-manager-plugins', PERMALINK_MANAGER_URL . '/out/permalink-manager-plugins.js', array( 'jquery', ), PERMALINK_MANAGER_VERSION, array( 'in_footer' => false ) );
+		wp_enqueue_script( 'permalink-manager', PERMALINK_MANAGER_URL . '/out/permalink-manager-admin.js', array( 'jquery', 'permalink-manager-plugins' ), PERMALINK_MANAGER_VERSION, array( 'in_footer' => false ) );
+
+		if ( isset( $_GET['section'] ) && $_GET['section'] === 'permastructs' ) {
+			wp_enqueue_script( 'thickbox' );
+			wp_enqueue_style( 'thickbox' );
+		}
 
 		wp_localize_script( 'permalink-manager', 'permalink_manager', array(
 			'ajax_url' => admin_url( 'admin-ajax.php' ),
@@ -243,7 +243,7 @@ class Permalink_Manager_Admin_Functions {
 			}
 		}
 
-		echo $html;
+		echo wp_kses_post( $html );
 	}
 
 	/**
@@ -252,7 +252,7 @@ class Permalink_Manager_Admin_Functions {
 	function display_plugin_notices() {
 		global $permalink_manager_before_sections_html;
 
-		echo $permalink_manager_before_sections_html;
+		echo wp_kses_post( $permalink_manager_before_sections_html );
 	}
 
 	/**

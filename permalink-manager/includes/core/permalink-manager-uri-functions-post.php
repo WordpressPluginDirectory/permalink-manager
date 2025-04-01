@@ -68,9 +68,9 @@ class Permalink_Manager_URI_Functions_Post {
 		}
 
 		// Do not run when metaboxes are loaded with Gutenberg
-		if ( ! empty( $_REQUEST['meta-box-loader'] ) && empty( $_POST['custom_uri'] ) ) {
+		/* if ( ! empty( $_REQUEST['meta-box-loader'] ) && empty( $_POST['custom_uri'] ) ) {
 			return $permalink;
-		}
+		}*/
 
 		// Do not filter if $permalink_manager_ignore_permalink_filters global is set
 		if ( ! empty( $permalink_manager_ignore_permalink_filters ) ) {
@@ -79,8 +79,8 @@ class Permalink_Manager_URI_Functions_Post {
 
 		$post = ( is_integer( $post ) ) ? get_post( $post ) : $post;
 
-		// Do not run if post object is invalid
-		if ( empty( $post ) || empty( $post->ID ) || empty( $post->post_type ) ) {
+		// Do not run if post object is invalid or the permalink is not string
+		if ( empty( $post ) || empty( $post->ID ) || empty( $post->post_type ) || ! is_string( $permalink ) ) {
 			return $permalink;
 		}
 
@@ -180,7 +180,7 @@ class Permalink_Manager_URI_Functions_Post {
 	 * @return string
 	 */
 	public static function get_default_post_uri( $post, $native_uri = false, $check_if_disabled = false ) {
-		global $permalink_manager_options, $permalink_manager_uris, $permalink_manager_permastructs, $wp_post_types, $icl_adjust_id_url_filter_off;
+		global $permalink_manager_uris, $permalink_manager_permastructs, $wp_post_types, $icl_adjust_id_url_filter_off;
 
 		// Disable WPML adjust ID filter
 		$icl_adjust_id_url_filter_off = true;
@@ -194,7 +194,13 @@ class Permalink_Manager_URI_Functions_Post {
 		}
 
 		$post_type = $post->post_type;
-		$post_name = ( empty( $post->post_name ) ) ? Permalink_Manager_Helper_Functions::sanitize_title( $post->post_title ) : $post->post_name;
+
+		if ( empty( $post->post_name ) ) {
+			$pre_post_name = Permalink_Manager_Helper_Functions::sanitize_title( $post->post_title );
+			$post_name     = wp_unique_post_slug( $pre_post_name, $post->ID, 'publish', $post->post_type, $post->post_parent );
+		} else {
+			$post_name = $post->post_name;
+		}
 
 		// 1A. Check if post type is allowed
 		if ( $check_if_disabled && Permalink_Manager_Helper_Functions::is_post_type_disabled( $post_type ) ) {
@@ -213,7 +219,7 @@ class Permalink_Manager_URI_Functions_Post {
 
 			$native_permastructure = ( $parent_page ) ? trim( $parent_page_uri, "/" ) . "/attachment" : "";
 		} else {
-			$native_permastructure = Permalink_Manager_Helper_Functions::get_default_permastruct( $post_type );
+			$native_permastructure = Permalink_Manager_Permastructure_Functions::get_default_permastruct( $post_type );
 		}
 
 		// 1B. Get the permastructure
@@ -258,15 +264,9 @@ class Permalink_Manager_URI_Functions_Post {
 		$full_native_slug = $post_name;
 
 		// 3A. Fix for hierarchical CPT (start)
-		// $full_slug = (is_post_type_hierarchical($post_type)) ? get_page_uri($post) : $post_name;
 		if ( $post->ancestors && is_post_type_hierarchical( $post_type ) ) {
-			foreach ( $post->ancestors as $parent ) {
-				$parent = get_post( $parent );
-				if ( $parent && $parent->post_name ) {
-					$full_native_slug = $parent->post_name . '/' . $full_native_slug;
-					$full_custom_slug = Permalink_Manager_Helper_Functions::force_custom_slugs( $parent->post_name, $parent ) . '/' . $full_custom_slug;
-				}
-			}
+			$full_native_slug = Permalink_Manager_Helper_Functions::get_post_full_slug( $post, false, true );
+			$full_custom_slug = Permalink_Manager_Helper_Functions::get_post_full_slug( $post, false, false );
 		}
 
 		// 3B. Allow filter the default slug (only custom permalinks)
@@ -276,7 +276,7 @@ class Permalink_Manager_URI_Functions_Post {
 			$full_slug = $full_native_slug;
 		}
 
-		$post_type_tag = Permalink_Manager_Helper_Functions::get_post_tag( $post_type );
+		$post_type_tag = Permalink_Manager_Permastructure_Functions::get_post_tag( $post_type );
 
 		// 3C. Get the standard tags and replace them with their values
 		$tags              = array( '%year%', '%monthnum%', '%monthname%', '%day%', '%hour%', '%minute%', '%second%', '%post_id%', '%author%', '%post_type%' );
@@ -287,19 +287,9 @@ class Permalink_Manager_URI_Functions_Post {
 		$slug_tags             = array( $post_type_tag, "%postname%", "%postname_flat%", "%pagename_flat%", "%{$post_type}_flat%", "%native_slug%", '%native_title%' );
 		$slug_tags_replacement = array( $full_slug, $full_slug, $custom_slug, $custom_slug, $custom_slug, $full_native_slug, $post_title_slug );
 
-		// 3E. Check if any post tag is present in custom permastructure
-		$do_not_append_slug = ( ! empty( $permalink_manager_options['permastructure-settings']['do_not_append_slug']['post_types'][ $post_type ] ) ) ? true : false;
-		$do_not_append_slug = apply_filters( "permalink_manager_do_not_append_slug", $do_not_append_slug, $post_type, $post );
-		if ( ! $do_not_append_slug ) {
-			foreach ( $slug_tags as $tag ) {
-				if ( strpos( $default_uri, $tag ) !== false ) {
-					$do_not_append_slug = true;
-					break;
-				}
-			}
-		}
+		$do_not_append_slug = Permalink_Manager_Permastructure_Functions::is_slug_tag_present( $default_uri, $slug_tags, $post );
 
-		// 3F. Replace the post tags with slugs or append the slug if no post tag is defined
+		// 3E. Replace the post tags with slugs or append the slug if no post tag is defined
 		if ( ! empty( $do_not_append_slug ) ) {
 			$default_uri = str_replace( $slug_tags, $slug_tags_replacement, $default_uri );
 		} else {
@@ -478,7 +468,10 @@ class Permalink_Manager_URI_Functions_Post {
 		}
 
 		// Get the rows before they are altered
-		return $wpdb->get_results( "SELECT post_type, post_title, post_name, ID FROM {$wpdb->posts} AS p LEFT JOIN {$wpdb->postmeta} AS pm ON pm.post_ID = p.ID AND pm.meta_key = 'auto_update_uri' WHERE ((post_status IN ('{$post_statuses}') AND post_type IN ('{$post_types}')){$attachment_support}) {$where}", ARRAY_A );
+		$query = "SELECT post_type, post_title, post_name, ID FROM {$wpdb->posts} AS p LEFT JOIN {$wpdb->postmeta} AS pm ON pm.post_ID = p.ID AND pm.meta_key = 'auto_update_uri' WHERE ((post_status IN ('{$post_statuses}') AND post_type IN ('{$post_types}')){$attachment_support}) {$where}";
+		$query = apply_filters( 'permalink_manager_get_items_query', $query, $where, 'post_types' );
+
+		return $wpdb->get_results( $query, ARRAY_A );
 	}
 
 	/**
@@ -527,18 +520,7 @@ class Permalink_Manager_URI_Functions_Post {
 						$new_post_name = $old_post_name;
 					}
 				} else {
-					// Do replacement on slugs (non-REGEX)
-					if ( preg_match( "/^\/.+\/[a-z]*$/i", $old_string ) ) {
-						$regex   = stripslashes( trim( sanitize_text_field( $_POST['old_string'] ), "/" ) );
-						$regex   = preg_quote( $regex, '~' );
-						$pattern = "~{$regex}~";
-
-						$new_post_name = ( $mode == 'slugs' ) ? preg_replace( $pattern, $new_string, $old_post_name ) : $old_post_name;
-						$new_uri       = ( $mode != 'slugs' ) ? preg_replace( $pattern, $new_string, $old_uri ) : $old_uri;
-					} else {
-						$new_post_name = ( $mode == 'slugs' ) ? str_replace( $old_string, $new_string, $old_post_name ) : $old_post_name; // Post name is changed only in first mode
-						$new_uri       = ( $mode != 'slugs' ) ? str_replace( $old_string, $new_string, $old_uri ) : $old_uri;
-					}
+					list( $new_post_name, $new_uri ) = Permalink_Manager_Helper_Functions::replace_uri_slug( $old_string, $new_string, $old_post_name, $old_uri, $mode );
 				}
 
 				// Check if native slug should be changed
@@ -592,24 +574,15 @@ class Permalink_Manager_URI_Functions_Post {
 			foreach ( $new_uris as $id => $new_uri ) {
 				// Prepare variables
 				$this_post = get_post( $id );
-				$is_draft  = ( ! empty( $this_post->post_status ) && $this_post->post_status == 'draft' ) ? true : false;
+				$old_uri   = Permalink_Manager_URI_Functions::get_single_uri( $this_post, false, true );
 
-				// Get default & native URL
-				$native_uri  = self::get_default_post_uri( $this_post, true );
-				$default_uri = ( $is_draft ) ? '' : self::get_default_post_uri( $this_post );
-				$old_uri     = Permalink_Manager_URI_Functions::get_single_uri( $id, false, true );
+				$final_uri = self::save_uri( $this_post, $new_uri, false, false, false );
 
-				// Process new values - empty entries will be treated as default values
-				$new_uri = Permalink_Manager_Helper_Functions::sanitize_title( $new_uri );
-				$new_uri = ( ! empty( $new_uri ) ) ? trim( $new_uri, "/" ) : $default_uri;
-
-				if ( $new_uri != $old_uri ) {
-					Permalink_Manager_URI_Functions::save_single_uri( $id, $new_uri, false, false );
-					$updated_array[] = array( 'item_title' => get_the_title( $id ), 'ID' => $id, 'old_uri' => $old_uri, 'new_uri' => $new_uri );
+				if ( $final_uri ) {
+					$updated_array[] = array( 'item_title' => get_the_title( $id ), 'ID' => $id, 'old_uri' => $old_uri, 'new_uri' => $final_uri );
 					$updated_slugs_count ++;
-
-					do_action( 'permalink_manager_updated_post_uri', $id, $new_uri, $old_uri, $native_uri, $default_uri );
 				}
+
 			}
 
 			// Save all custom permalinks
@@ -638,11 +611,13 @@ class Permalink_Manager_URI_Functions_Post {
 
 		// Check if the post is excluded
 		if ( empty( $post->post_type ) || Permalink_Manager_Helper_Functions::is_post_excluded( $post, true ) ) {
-			return $html;
+			$show_uri_editor = false;
+		} else {
+			$show_uri_editor = true;
 		}
 
 		// Stop the hook (if needed)
-		$show_uri_editor = apply_filters( "permalink_manager_show_uri_editor_post", true, $post, $post->post_type );
+		$show_uri_editor = apply_filters( "permalink_manager_show_uri_editor_post", $show_uri_editor, $post, $post->post_type );
 		if ( ! $show_uri_editor ) {
 			return $html;
 		}
@@ -658,9 +633,14 @@ class Permalink_Manager_URI_Functions_Post {
 			// B. Do not change anything if post is not saved yet (display sample permalink instead)
 			if ( $autosave || empty( $post->post_status ) ) {
 				$sample_permalink_uri = self::get_default_post_uri( $id );
-			} // C. Display custom URI if set
+			} // C. Display custom URI (if set) or default custom URI (for drafts)
 			else {
-				$sample_permalink_uri = Permalink_Manager_URI_Functions::get_single_uri( $post, true );
+				$is_draft             = ( $post->post_status == 'draft' ) ? true : false;
+				$sample_permalink_uri = Permalink_Manager_URI_Functions::get_single_uri( $post, ! $is_draft, false );
+			}
+
+			if ( empty( $sample_permalink_uri ) && $post->post_type !== 'attachment' ) {
+				return $html;
 			}
 
 			// Decode URI & allow to filter it
@@ -682,7 +662,7 @@ class Permalink_Manager_URI_Functions_Post {
 		}
 
 		// 2. Append the Permalink Editor
-		$new_html .= ( ! $autosave ) ? Permalink_Manager_UI_Elements::display_uri_box( $post ) : "";
+		$new_html .= Permalink_Manager_UI_Elements::display_uri_box( $post );
 
 		// 3. Hide the "Edit" slug button
 		$new_html = str_replace( 'edit-slug button', 'edit-slug button hidden', $new_html );
@@ -690,6 +670,7 @@ class Permalink_Manager_URI_Functions_Post {
 		// 4. Append hidden field with native slug
 		$new_html .= ( ! empty( $post->post_name ) && strpos( $new_html, 'editable-post-name-full' ) === false ) ? "<span id=\"editable-post-name-full\">{$post->post_name}</span>" : "";
 
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		return $new_html;
 	}
 
@@ -737,7 +718,7 @@ class Permalink_Manager_URI_Functions_Post {
 			}
 
 			$uri = ( ! empty( $permalink_manager_uris[ $post_id ] ) ) ? rawurldecode( $permalink_manager_uris[ $post_id ] ) : self::get_post_uri( $post_id, true, $is_draft );
-			printf( '<span class="permalink-manager-col-uri" data-disabled="%s">%s</span>', intval( $disabled ), $uri );
+			printf( '<span class="permalink-manager-col-uri" data-disabled="%s">%s</span>', esc_attr( intval( $disabled ) ), esc_html( $uri ) );
 		}
 	}
 
@@ -749,9 +730,9 @@ class Permalink_Manager_URI_Functions_Post {
 	 * @param bool $is_new_post
 	 * @param int|bool $auto_update_mode
 	 *
-	 * @return bool
+	 * @return bool|string
 	 */
-	static function save_uri( $post, $new_uri = '', $is_new_post = false, $auto_update_mode = false ) {
+	static function save_uri( $post, $new_uri = '', $is_new_post = false, $auto_update_mode = false, $db_save = true ) {
 		global $permalink_manager_options;
 
 		// Do not do anything if post is auto-saved
@@ -787,7 +768,7 @@ class Permalink_Manager_URI_Functions_Post {
 
 		$default_uri = self::get_default_post_uri( $post_object );
 		$native_uri  = self::get_default_post_uri( $post_object, true );
-		$old_uri     = self::get_post_uri( $post_object->ID, true );
+		$old_uri     = self::get_post_uri( $post_object->ID, false, true );
 
 		if ( $is_new_post ) {
 			$new_uri    = $default_uri;
@@ -799,18 +780,23 @@ class Permalink_Manager_URI_Functions_Post {
 
 		$new_uri = apply_filters( 'permalink_manager_pre_update_post_uri', $new_uri, $post_object->ID, $old_uri, $native_uri, $default_uri );
 
+		// The update URI process is stopped by the hook above or disabled in "Auto-update" settings
 		if ( ! $allow_save || ( ! empty( $auto_update_uri ) && $auto_update_uri == 2 ) ) {
-			$uri_saved = false;
-		} else if ( ! empty( $new_uri ) ) {
-			Permalink_Manager_URI_Functions::save_single_uri( $post_object->ID, $new_uri, false, true );
+			return false;
+		}
+
+		//  Save the URI only if $new_uri variable is set
+		if ( ! empty( $new_uri ) && $new_uri !== $old_uri ) {
+			Permalink_Manager_URI_Functions::save_single_uri( $post_object->ID, $new_uri, false, $db_save );
 			$uri_saved = true;
-		} else {
+		} // The $new_uri variable is empty or no change is detected
+		else {
 			$uri_saved = false;
 		}
 
-		do_action( 'permalink_manager_updated_post_uri', $post_object->ID, $new_uri, $old_uri, $native_uri, $default_uri, $single_update = true, $uri_saved );
+		do_action( 'permalink_manager_updated_post_uri', $post_object->ID, $new_uri, $old_uri, $native_uri, $default_uri, $uri_saved );
 
-		return $uri_saved;
+		return ( $uri_saved ) ? $new_uri : false;
 	}
 
 	/**

@@ -13,10 +13,6 @@ class Permalink_Manager_Helper_Functions {
 	 * Add hooks used by plugin to filter the custom permalinks
 	 */
 	public function init() {
-		// Replace empty placeholder tags & remove BOM
-		add_filter( 'permalink_manager_filter_default_post_uri', array( $this, 'replace_empty_placeholder_tags' ), 10, 5 );
-		add_filter( 'permalink_manager_filter_default_term_uri', array( $this, 'replace_empty_placeholder_tags' ), 10, 5 );
-
 		// Clear the final default URIs
 		add_filter( 'permalink_manager_filter_default_term_uri', array( $this, 'clear_single_uri' ), 20 );
 		add_filter( 'permalink_manager_filter_default_post_uri', array( $this, 'clear_single_uri' ), 20 );
@@ -58,8 +54,12 @@ class Permalink_Manager_Helper_Functions {
 
 			$primary_term = ( is_numeric( $yoast_primary_term_id ) ) ? get_term( $yoast_primary_term_id, $taxonomy ) : '';
 		} // B. The SEO Framework
-		else if ( function_exists( 'the_seo_framework' ) ) {
-			$primary_term = the_seo_framework()->get_primary_term( $post_id, $taxonomy );
+		else if ( function_exists( 'the_seo_framework' ) || function_exists( 'tsf' ) ) {
+			if ( class_exists( 'The_SEO_Framework\Data\Plugin\Post' ) ) {
+				$primary_term = The_SEO_Framework\Data\Plugin\Post::get_primary_term( $post_id, $taxonomy );
+			} elseif ( function_exists( 'the_seo_framework' ) && method_exists( the_seo_framework(), 'get_primary_term' ) ) {
+				$primary_term = the_seo_framework()->get_primary_term( $post_id, $taxonomy );
+			}
 		} // C. RankMath
 		else if ( class_exists( 'RankMath' ) ) {
 			$primary_cat_id = get_post_meta( $post_id, "rank_math_primary_{$taxonomy}", true );
@@ -195,10 +195,46 @@ class Permalink_Manager_Helper_Functions {
 	}
 
 	/**
+	 * Get the full (hierarchical) slug for specific post object
+	 *
+	 * @param WP_Post|int $post
+	 * @param bool $slugs_mode
+	 * @param bool $native_uri
+	 *
+	 * @return string
+	 */
+	static function get_post_full_slug( $post, $slugs_mode = false, $native_uri = false ) {
+		$post = ( ! empty( $post->ID ) ) ? $post : get_post( $post );
+
+		if ( ! empty( $post->post_type ) ) {
+			$full_native_slug = $post->post_name;
+			$full_custom_slug = Permalink_Manager_Helper_Functions::force_custom_slugs( $post->post_name, $post, false, $slugs_mode );
+
+			if ( $post->ancestors && is_post_type_hierarchical( $post->post_type ) ) {
+				foreach ( $post->ancestors as $parent ) {
+					$parent = get_post( $parent );
+					if ( $parent && $parent->post_name ) {
+						$full_native_slug = $parent->post_name . '/' . $full_native_slug;
+						$full_custom_slug = Permalink_Manager_Helper_Functions::force_custom_slugs( $parent->post_name, $parent, false, $slugs_mode ) . '/' . $full_custom_slug;
+					}
+				}
+			}
+
+			$post_slug = ( $native_uri ) ? $full_native_slug : $full_custom_slug;
+		}
+
+		return ( ! empty( $post_slug ) ) ? $post_slug : "";
+	}
+
+	/**
 	 * Allow to disable post types and taxonomies
 	 */
 	static function get_disabled_post_types( $include_user_excluded = true ) {
 		global $wp_post_types, $permalink_manager_options;
+
+		$allowed_post_types = array(
+			'shop_coupon'
+		);
 
 		$disabled_post_types = array(
 			'revision',
@@ -220,11 +256,16 @@ class Permalink_Manager_Helper_Functions {
 			'elementor_library',
 			'elementor_menu_item',
 			'cms_block',
-			'nooz_coverage'
+			'nooz_coverage',
+			'bricks_template'
 		);
 
 		// 1. Disable post types that are not publicly_queryable
 		foreach ( $wp_post_types as $post_type ) {
+			if ( in_array( $post_type->name, $allowed_post_types ) ) {
+				continue;
+			}
+
 			if ( ! is_post_type_viewable( $post_type ) || ( empty( $post_type->query_var ) && empty( $post_type->rewrite ) && empty( $post_type->_builtin ) && ! empty( $permalink_manager_options['general']['partial_disable_strict'] ) ) ) {
 				$disabled_post_types[] = $post_type->name;
 			}
@@ -254,7 +295,8 @@ class Permalink_Manager_Helper_Functions {
 			'fl-builder-template-category',
 			'post_format',
 			'nav_menu',
-			'language'
+			'language',
+			'template_bundle'
 		);
 
 		// 1. Disable taxonomies that are not publicly_queryable
@@ -527,30 +569,11 @@ class Permalink_Manager_Helper_Functions {
 	static function get_post_statuses() {
 		$post_statuses = get_post_statuses();
 
-		return apply_filters( 'permalink_manager_post_statuses', $post_statuses );
-	}
-
-	/**
-	 * Get the default permalink format for specific post type
-	 *
-	 * @param string $post_type
-	 * @param bool $remove_post_tag
-	 *
-	 * @return string
-	 */
-	static function get_default_permastruct( $post_type = 'page', $remove_post_tag = false ) {
-		global $wp_rewrite;
-
-		// Get default permastruct
-		if ( $post_type == 'page' ) {
-			$permastruct = $wp_rewrite->get_page_permastruct();
-		} else if ( $post_type == 'post' ) {
-			$permastruct = get_option( 'permalink_structure' );
-		} else {
-			$permastruct = $wp_rewrite->get_extra_permastruct( $post_type );
+		if ( is_array( $post_statuses ) ) {
+			$post_statuses['future'] = __( 'Scheduled', 'permalink-manager' );
 		}
 
-		return ( $remove_post_tag ) ? trim( str_replace( array( "%postname%", "%pagename%", "%{$post_type}%" ), "", $permastruct ), "/" ) : $permastruct;
+		return apply_filters( 'permalink_manager_post_statuses', $post_statuses );
 	}
 
 	/**
@@ -571,67 +594,6 @@ class Permalink_Manager_Helper_Functions {
 		}
 
 		return apply_filters( "permalink_manager_endpoints", str_replace( "/", "\/", $endpoints ) );
-	}
-
-	/**
-	 * Get a list of all structure tags
-	 *
-	 * @param bool $code
-	 * @param string $separator
-	 * @param bool $hide_slug_tags
-	 *
-	 * @return string
-	 */
-	static function get_all_structure_tags( $code = true, $separator = ', ', $hide_slug_tags = true ) {
-		global $wp_rewrite;
-
-		$tags = $wp_rewrite->rewritecode;
-
-		// Hide slug tags
-		if ( $hide_slug_tags ) {
-			$post_types = Permalink_Manager_Helper_Functions::get_post_types_array();
-			foreach ( $post_types as $post_type => $post_type_name ) {
-				$post_type_tag = Permalink_Manager_Helper_Functions::get_post_tag( $post_type );
-				// Find key with post type tag from rewrite code
-				$key = array_search( $post_type_tag, $tags );
-				if ( $key ) {
-					unset( $tags[ $key ] );
-				}
-			}
-		}
-
-		// Extra tags
-		$tags[] = '%taxonomy%';
-		$tags[] = '%post_type%';
-		$tags[] = '%term_id%';
-		$tags[] = '%monthname%';
-
-		foreach ( $tags as &$tag ) {
-			$tag = ( $code ) ? "<code>{$tag}</code>" : "{$tag}";
-		}
-		$output = implode( $separator, $tags );
-
-		return "<span class=\"structure-tags-list\">{$output}</span>";
-	}
-
-	/**
-	 * Get the post name permastructure tag for specific post type
-	 *
-	 * @param string $post_type
-	 *
-	 * @return string
-	 */
-	static function get_post_tag( $post_type ) {
-		// Get the post type (with fix for posts & pages)
-		if ( $post_type == 'page' ) {
-			$post_type_tag = '%pagename%';
-		} else if ( $post_type == 'post' ) {
-			$post_type_tag = '%postname%';
-		} else {
-			$post_type_tag = "%{$post_type}%";
-		}
-
-		return $post_type_tag;
 	}
 
 	/**
@@ -801,34 +763,37 @@ class Permalink_Manager_Helper_Functions {
 	}
 
 	/**
-	 * Replace empty placeholder tags & remove BOM
+	 * Replace the string in custom permalink or native slug
 	 *
-	 * @param string $default_uri
-	 * @param string $native_slug
-	 * @param string $element
-	 * @param string $slug
-	 * @param bool $native_uri
+	 * @param string $old_string
+	 * @param string $new_string
+	 * @param string $old_slug
+	 * @param string $old_uri
+	 * @param string $mode
 	 *
-	 * @return string
+	 * @return array|void
 	 */
-	public static function replace_empty_placeholder_tags( $default_uri, $native_slug = "", $element = "", $slug = "", $native_uri = false ) {
-		// Remove the BOM
-		$default_uri = str_replace( array( "\xEF\xBB\xBF", "%ef%bb%bf" ), '', $default_uri );
+	public static function replace_uri_slug( $old_string, $new_string, $old_slug, $old_uri, $mode ) {
+		if ( preg_match( "/^\#.+\#$/i", $old_string ) ) {
+			$old_string = trim( $old_string, '#' );
 
-		// Encode the URI before placeholders are removed
-		$chunks = explode( '/', $default_uri );
-		foreach ( $chunks as &$chunk ) {
-			if ( ! preg_match( "/^(%.+?%)$/", $chunk ) && preg_match( '/%[A-F0-9]{2}%[A-F0-9]{2}/i', $chunk ) ) {
-				$chunk = rawurldecode( $chunk );
+			$allowed_in_chars  = '/[\w\d\s\.\*\+\-\?\!\/\|\(\)\{\}\[\]^$]/';
+			$allowed_out_chars = '/^[a-zA-Z0-9\.\/\$\-\_]+$/';
+
+			if ( ! preg_match( $allowed_in_chars, $old_string ) || ! preg_match( $allowed_out_chars, $new_string ) ) {
+				die( 'Invalid characters in REGEX formula.' );
 			}
+
+			$pattern = "#{$old_string}#";
+
+			$new_slug = ( $mode == 'slugs' ) ? preg_replace( $pattern, $new_string, $old_slug ) : $old_slug;
+			$new_uri  = ( $mode != 'slugs' ) ? preg_replace( $pattern, $new_string, $old_uri ) : $old_uri;
+		} else {
+			$new_slug = ( $mode == 'slugs' ) ? str_replace( $old_string, $new_string, $old_slug ) : $old_slug;
+			$new_uri  = ( $mode != 'slugs' ) ? str_replace( $old_string, $new_string, $old_uri ) : $old_uri;
 		}
-		$default_uri = implode( "/", $chunks );
 
-		$empty_tag_replacement = apply_filters( 'permalink_manager_empty_tag_replacement', '', $element );
-		$default_uri           = preg_replace( "/%(.+?)%/", $empty_tag_replacement, $default_uri );
-		$default_uri           = str_replace( "//", "/", $default_uri );
-
-		return trim( $default_uri, "/" );
+		return array( $new_slug, $new_uri );
 	}
 
 	/**
